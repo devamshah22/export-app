@@ -1,0 +1,153 @@
+body {
+  margin: 0;
+  font-family: 'Roboto', 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Fix date input label overlap issue */
+input[type="date"]::-webkit-datetime-edit {
+  padding-top: 2px;
+}
+
+/* Print styles - hide nav, buttons, show only form content */
+@media print {
+  /* Hide navigation and buttons */
+  nav, header, .MuiAppBar-root, .MuiToolbar-root {
+    display: none !important;
+  }
+  button, .MuiIconButton-root {
+    display: none !important;
+  }
+
+  /* Force all accordions to be expanded when printing */
+  .MuiAccordion-root {
+    margin: 4px 0 !important;
+    box-shadow: none !important;
+  }
+  .MuiAccordionDetails-root {
+    display: block !important;
+    visibility: visible !important;
+    height: auto !important;
+  }
+  .MuiCollapse-root {
+    display: block !important;
+    visibility: visible !important;
+    height: auto !important;
+    min-height: auto !important;
+  }
+  .MuiCollapse-wrapper, .MuiCollapse-wrapperInner {
+    display: block !important;
+    visibility: visible !important;
+  }
+
+  /* Clean up form fields - remove borders, show only values */
+  .MuiOutlinedInput-notchedOutline {
+    border: none !important;
+  }
+  .MuiInputBase-root {
+    font-size: 11px !important;
+  }
+  .MuiInputBase-input {
+    padding: 2px 0 !important;
+    font-size: 11px !important;
+  }
+  .MuiFormLabel-root, .MuiInputLabel-root {
+    font-size: 9px !important;
+    color: #666 !important;
+    transform: translate(0, -14px) scale(0.85) !important;
+  }
+  .MuiOutlinedInput-root {
+    border-bottom: 1px solid #ccc !important;
+    border-radius: 0 !important;
+  }
+  
+  /* Hide dropdown arrows */
+  .MuiSelect-icon {
+    display: none !important;
+  }
+
+  /* Hide placeholders */
+  input::placeholder, textarea::placeholder {
+    color: transparent !important;
+  }
+  input[type="date"]::-webkit-datetime-edit-text,
+  input[type="date"]::-webkit-datetime-edit-month-field,
+  input[type="date"]::-webkit-datetime-edit-day-field,
+  input[type="date"]::-webkit-datetime-edit-year-field {
+    color: transparent !important;
+  }
+  /* Show date value if it has one */
+  input[type="date"][value]:not([value=""])::-webkit-datetime-edit-text,
+  input[type="date"][value]:not([value=""])::-webkit-datetime-edit-month-field,
+  input[type="date"][value]:not([value=""])::-webkit-datetime-edit-day-field,
+  input[type="date"][value]:not([value=""])::-webkit-datetime-edit-year-field {
+    color: #000 !important;
+  }
+
+  /* Hide date picker icon */
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    display: none !important;
+  }
+
+  /* Hide helper text */
+  .MuiFormHelperText-root {
+    display: none !important;
+  }
+
+  /* Hide empty sections text */
+  .MuiTypography-colorTextSecondary {
+    display: none !important;
+  }
+
+  /* Paper styling */
+  .MuiPaper-root {
+    box-shadow: none !important;
+    border: none !important;
+    margin: 2px 0 !important;
+  }
+
+  /* Accordion summary styling */
+  .MuiAccordionSummary-root {
+    min-height: 30px !important;
+    border-bottom: 1px solid #333;
+    padding: 0 8px !important;
+  }
+  .MuiAccordionSummary-content {
+    margin: 4px 0 !important;
+  }
+  .MuiAccordionSummary-expandIconWrapper {
+    display: none !important;
+  }
+
+  /* Grid spacing */
+  .MuiGrid-container {
+    margin: 0 !important;
+  }
+  .MuiGrid-item {
+    padding: 4px 8px !important;
+  }
+
+  /* Alert hide */
+  .MuiAlert-root {
+    display: none !important;
+  }
+
+  /* Chip styling */
+  .MuiChip-root {
+    height: 20px !important;
+    font-size: 9px !important;
+  }
+
+  /* Compact page */
+  body {
+    font-size: 10px;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Page margins */
+  @page {
+    margin: 10mm;
+  }
+}

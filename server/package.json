@@ -1,0 +1,30 @@
+{
+  "name": "export-app-server",
+  "version": "1.0.0",
+  "description": "Export Order Management System - Backend",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "db:migrate": "node src/db/migrate.js",
+    "db:seed": "node src/db/seed.js",
+    "test": "node --test test/*.test.js",
+    "test:integration": "node --test --test-concurrency=1 test/integration/*.test.js",
+    "test:integration:run": "set RUN_INTEGRATION_TESTS=1&& node --test --test-concurrency=1 test/integration/*.test.js",
+    "test:all": "npm test && npm run test:integration:run"
+  },
+  "dependencies": {
+    "bcryptjs": "2.4.3",
+    "cors": "2.8.5",
+    "dotenv": "16.4.5",
+    "express": "4.21.0",
+    "jsonwebtoken": "9.0.2",
+    "mysql2": "3.11.0",
+    "number-to-words": "1.2.4",
+    "puppeteer": "23.3.0"
+  },
+  "devDependencies": {
+    "nodemon": "3.1.4",
+    "supertest": "7.1.4"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "watch": ["src/"],
+  "ext": "js,json",
+  "ignore": ["node_modules/", "*.pdf", "*.png"],
+  "delay": "1000"
+}
