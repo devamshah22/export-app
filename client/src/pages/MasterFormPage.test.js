@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import MasterFormPage from './MasterFormPage';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -42,8 +42,8 @@ jest.mock('../services/api', () => ({
     }
 }));
 
-jest.mock('../components/DocumentSidebar', () => function MockDocumentSidebar() {
-    return <div data-testid="document-sidebar" />;
+jest.mock('../components/DocumentSidebar', () => function MockDocumentSidebar({ onNavigate, disabled }) {
+    return <button disabled={disabled} onClick={() => onNavigate('CI')}>Go to CI</button>;
 });
 
 jest.mock('../components/ContainerDialog', () => function MockContainerDialog({
@@ -51,7 +51,8 @@ jest.mock('../components/ContainerDialog', () => function MockContainerDialog({
     onSave,
     onClose,
     container,
-    conflictDraft
+    conflictDraft,
+    saving
 }) {
     if (!open) return null;
     return (
@@ -61,10 +62,10 @@ jest.mock('../components/ContainerDialog', () => function MockContainerDialog({
             <span data-testid="container-conflict">
                 {conflictDraft ? JSON.stringify(conflictDraft.data) : ''}
             </span>
-            <button onClick={() => onSave({ container_no: 'LOCAL-CONTAINER', products: [] })}>
-                Save test container
+            <button disabled={saving} onClick={() => onSave({ container_no: 'LOCAL-CONTAINER', products: [] })}>
+                {saving ? 'Saving test container' : 'Save test container'}
             </button>
-            <button onClick={onClose}>Cancel test container</button>
+            <button disabled={saving} onClick={onClose}>Cancel test container</button>
         </div>
     );
 });
@@ -186,6 +187,16 @@ function conflictResponse(master) {
 function renderPage(params = { id: '42' }) {
     routeParams = params;
     return render(<MasterFormPage />);
+}
+
+function deferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((onResolve, onReject) => {
+        resolve = onResolve;
+        reject = onReject;
+    });
+    return { promise, resolve, reject };
 }
 
 beforeEach(() => {
@@ -496,10 +507,10 @@ test('preserves document conflict draft and retries document save with latest ve
 });
 
 test('suppresses duplicate document saves while first request is pending', async () => {
-    let resolveSave;
-    mastersAPI.documentSave.mockImplementation(() => new Promise(resolve => {
-        resolveSave = resolve;
-    }));
+    const request = deferred();
+    mastersAPI.documentSave
+        .mockReturnValueOnce(request.promise)
+        .mockResolvedValueOnce({ data: { ...baseMaster, version: 3 } });
 
     renderPage({ id: '42', docType: 'PI' });
     const save = await screen.findByRole('button', { name: 'Save test document' });
@@ -507,5 +518,61 @@ test('suppresses duplicate document saves while first request is pending', async
     fireEvent.click(save);
 
     await waitFor(() => expect(mastersAPI.documentSave).toHaveBeenCalledTimes(1));
-    resolveSave({ data: { ...baseMaster, version: 2 } });
+    expect(save).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('Saving document...');
+    expect(screen.getByRole('button', { name: 'Go to CI' })).toBeDisabled();
+    expect(navigate).not.toHaveBeenCalled();
+
+    await act(async () => request.resolve({ data: { ...baseMaster, version: 2 } }));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(save).toBeEnabled();
+    expect(screen.getByRole('alert')).toHaveClass('MuiAlert-colorSuccess');
+    fireEvent.click(save);
+    await waitFor(() => expect(mastersAPI.documentSave.mock.calls[1][2].version).toBe(2));
+});
+
+test('locks root and container mutations while the Master save is pending', async () => {
+    const request = deferred();
+    mastersAPI.update.mockReturnValue(request.promise);
+
+    renderPage();
+    const invoice = await screen.findByDisplayValue('SERVER-INVOICE');
+    fireEvent.change(invoice, { target: { value: 'LOCAL-INVOICE' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('Saving Master...');
+    expect(invoice).toBeDisabled();
+    expect(screen.getByRole('button', { name: /Add Container/i })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Go to CI' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Back' })).toBeDisabled();
+    expect(mastersAPI.update).toHaveBeenCalledTimes(1);
+    expect(mastersAPI.addContainer).not.toHaveBeenCalled();
+
+    await act(async () => request.resolve({ data: { ...baseMaster, version: 2, invoice_no: 'LOCAL-INVOICE' } }));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+    expect(invoice).toBeEnabled();
+    expect(screen.getByRole('button', { name: /Add Container/i })).toBeEnabled();
+});
+
+test('keeps a pending container save visible and unlocks the dialog on failure', async () => {
+    const request = deferred();
+    mastersAPI.addContainer.mockReturnValue(request.promise);
+
+    renderPage();
+    await screen.findByText('No containers added yet. Click "Add Container" to begin.');
+    fireEvent.click(screen.getByRole('button', { name: /Add Container/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save test container' }));
+
+    expect(screen.getByRole('status')).toHaveTextContent('Saving container...');
+    expect(screen.getByRole('button', { name: 'Saving test container' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel test container' })).toBeDisabled();
+    expect(mastersAPI.addContainer).toHaveBeenCalledTimes(1);
+
+    await act(async () => request.reject(new Error('network unavailable')));
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save test container' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Cancel test container' })).toBeEnabled();
+    expect(screen.getByRole('alert')).toHaveTextContent('network unavailable');
 });

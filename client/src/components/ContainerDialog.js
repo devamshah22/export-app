@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     Dialog, DialogTitle, DialogContent, DialogActions, Button, Grid, TextField,
-    Typography, Divider, IconButton, Box, Paper, MenuItem
+    Typography, IconButton, Box, Paper, MenuItem
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -27,7 +27,8 @@ export default function ContainerDialog({
     container,
     masterData,
     weighbridges = [],
-    conflictDraft
+    conflictDraft,
+    saving = false
 }) {
     const [formData, setFormData] = useState({
         container_no: '',
@@ -177,9 +178,9 @@ export default function ContainerDialog({
     };
 
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
+        <Dialog open={open} onClose={saving ? undefined : onClose} maxWidth="lg" fullWidth>
             <DialogTitle>{container ? 'Edit Container' : 'Add Container'}</DialogTitle>
-            <DialogContent>
+            <DialogContent component="fieldset" disabled={saving} sx={{ border: 0, minWidth: 0 }}>
                 {/* Container Details */}
                 <Typography variant="subtitle1" fontWeight="bold" sx={{ mt: 1, mb: 1 }}>
                     Container Details
@@ -308,9 +309,9 @@ export default function ContainerDialog({
                 ))}
             </DialogContent>
             <DialogActions>
-                <Button onClick={onClose}>Cancel</Button>
-                <Button variant="contained" onClick={handleSave}>
-                    {container ? 'Update Container' : 'Add Container'}
+                <Button onClick={onClose} disabled={saving}>Cancel</Button>
+                <Button variant="contained" onClick={handleSave} disabled={saving}>
+                    {saving ? 'Saving...' : container ? 'Update Container' : 'Add Container'}
                 </Button>
             </DialogActions>
         </Dialog>
