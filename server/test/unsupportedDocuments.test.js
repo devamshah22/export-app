@@ -71,12 +71,13 @@ test('Master PDF route rejects retired document types explicitly', () => {
     assert.match(source, /Unsupported document type/);
 });
 
-test('Master page filters retired document selections and guards direct URLs', () => {
+test('Master page guards unsupported document routes and navigation', () => {
     const source = fs.readFileSync(
         path.resolve(__dirname, '..', '..', 'client/src/pages/MasterFormPage.js'),
         'utf8'
     );
     assert.match(source, /SUPPORTED_DOCUMENT_TYPES/);
     assert.match(source, /currentDoc.*SUPPORTED_DOCUMENT_TYPES/);
-    assert.match(source, /SUPPORTED_DOCUMENT_TYPES\.has\(document\.document_type\)/);
+    assert.match(source, /requestedDoc !== currentDoc/);
+    assert.match(source, /SUPPORTED_DOCUMENT_TYPES\.has\(docKey\)/);
 });

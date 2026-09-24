@@ -86,8 +86,14 @@ jest.mock('../components/documents/PIDocForm', () => function MockPIDocForm({ on
     );
 });
 
-jest.mock('../components/documents/CIDocForm', () => function MockCIDocForm() {
-    return <div data-testid="document-form" />;
+jest.mock('../components/documents/CIDocForm', () => function MockCIDocForm({ data, onChange, onSave }) {
+    return (
+        <div data-testid="document-form">
+            <input aria-label="Vessel No." value={data.vessel_no || ''}
+                onChange={event => onChange({ ...data, vessel_no: event.target.value })} />
+            <button onClick={() => void onSave({ fields: data }).catch(() => {})}>Save test CI</button>
+        </div>
+    );
 });
 jest.mock('../components/documents/PLDocForm', () => function MockPLDocForm() {
     return <div data-testid="document-form" />;
@@ -237,6 +243,19 @@ test('document navigation does not save a selection or generate PDFs in bulk', a
     expect(mastersAPI.setDocuments).not.toHaveBeenCalled();
     expect(mastersAPI.generatePDF).not.toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: /generate all|save selected documents/i })).not.toBeInTheDocument();
+});
+
+test('CI loads the shared Master vessel and saves edits back to that field', async () => {
+    mastersAPI.getById.mockResolvedValue({ data: { ...baseMaster, vessel_no: 'MASTER-VESSEL' } });
+    renderPage({ id: '42', docType: 'CI' });
+
+    const vessel = await screen.findByRole('textbox', { name: 'Vessel No.' });
+    expect(vessel).toHaveValue('MASTER-VESSEL');
+    fireEvent.change(vessel, { target: { value: 'UPDATED-VESSEL' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save test CI' }));
+
+    await waitFor(() => expect(mastersAPI.documentSave).toHaveBeenCalledWith('42', 'CI',
+        expect.objectContaining({ version: 1, fields: { vessel_no: 'UPDATED-VESSEL' } })));
 });
 
 test('sends root update with loaded Master version and restores stale root draft', async () => {
