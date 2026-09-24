@@ -51,6 +51,43 @@ test('hydrates weighbridge selection and container products when editing', async
 
     expect(await screen.findByTestId('weighbridge-value')).toHaveTextContent('17');
     expect(screen.getByDisplayValue('Container Product')).toBeInTheDocument();
+    expect(screen.getByRole('spinbutton', { name: 'Package Count' })).toHaveValue(8);
+});
+
+test('two products remain two product rows with independent package counts', async () => {
+    const onSave = jest.fn();
+    renderDialog({ container: null, onSave });
+
+    const firstPackageCount = await screen.findByRole('spinbutton', { name: 'Package Count' });
+    fireEvent.change(firstPackageCount, { target: { value: '24' } });
+    fireEvent.click(screen.getByRole('button', { name: /Add Product/i }));
+    expect(screen.getByText('Products in this Container (2)')).toBeInTheDocument();
+    const packageCounts = screen.getAllByRole('spinbutton', { name: 'Package Count' });
+    expect(packageCounts).toHaveLength(2);
+    fireEvent.change(packageCounts[1], { target: { value: '36' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Add Container' }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+        products: [
+            expect.objectContaining({ num_packages: 24 }),
+            expect.objectContaining({ num_packages: 36 })
+        ]
+    }));
+});
+
+test('does not silently truncate fractional package counts on save', async () => {
+    const onSave = jest.fn();
+    const alert = jest.spyOn(window, 'alert').mockImplementation(() => {});
+    renderDialog({ container: null, onSave });
+
+    fireEvent.change(await screen.findByRole('spinbutton', { name: 'Package Count' }), {
+        target: { value: '2.5' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Add Container' }));
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(alert).toHaveBeenCalledWith('Package Count must be a non-negative whole number.');
+    alert.mockRestore();
 });
 
 test('rehydrates transient weighbridge ID from persisted name', async () => {

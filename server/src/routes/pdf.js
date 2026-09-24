@@ -197,10 +197,19 @@ router.get('/master/:masterId/:docType', async (req, res) => {
                 html = generateMasterFormTemplate(masterData);
                 filename = `MASTER_${masterData.invoice_no || masterData.id}.pdf`;
                 break;
-            case 'CI':
-                html = generateCITemplate(masterData);
+            case 'CI': {
+                const [ciOverrides] = await pool.query(
+                    'SELECT field_key, field_value FROM document_overrides WHERE master_id = ? AND document_type = ?',
+                    [masterId, 'CI']
+                );
+                const ciVessel = ciOverrides.find(row => row.field_key === 'vessel_no');
+                html = generateCITemplate({
+                    ...masterData,
+                    vessel_no: ciVessel ? ciVessel.field_value : masterData.vessel_no
+                });
                 filename = `CI_${masterData.ci_invoice_no || masterData.invoice_no || masterData.id}_${masterData.master_financial_year || ''}.pdf`;
                 break;
+            }
             case 'PL':
                 html = generatePLTemplate(masterData);
                 filename = `PL_${masterData.ci_invoice_no || masterData.invoice_no || masterData.id}_${masterData.master_financial_year || ''}.pdf`;

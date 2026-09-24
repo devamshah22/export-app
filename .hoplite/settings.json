@@ -1,0 +1,9 @@
+{
+  "scripts": {
+    "setup": "cd client && npm ci --no-audit --no-fund",
+    "run": "cd client && HOST=0.0.0.0 PORT=3000 BROWSER=none REACT_APP_API_URL=/api npm start"
+  },
+  "ports": {
+    "preview": 3000
+  }
+}

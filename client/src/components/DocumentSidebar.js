@@ -1,5 +1,5 @@
 import React from 'react';
-import { List, ListItemButton, ListItemText, Paper, Typography, Divider } from '@mui/material';
+import { List, ListItemButton, ListItemText, Paper, Typography } from '@mui/material';
 
 const DOCUMENT_LIST = [
     { key: 'edit', label: 'Master Sheet' },
@@ -20,7 +20,7 @@ const DOCUMENT_LIST = [
     { key: 'VGM', label: 'VGM' },
 ];
 
-export default function DocumentSidebar({ currentDoc, masterId, onNavigate }) {
+export default function DocumentSidebar({ currentDoc, masterId, onNavigate, disabled = false }) {
     return (
         <Paper sx={{ position: 'sticky', top: 80, maxHeight: 'calc(100vh - 100px)', overflow: 'auto' }}>
             <Typography variant="subtitle2" sx={{ p: 1.5, fontWeight: 'bold', bgcolor: '#1565c0', color: '#fff' }}>
@@ -31,6 +31,7 @@ export default function DocumentSidebar({ currentDoc, masterId, onNavigate }) {
                     <ListItemButton
                         key={doc.key}
                         selected={currentDoc === doc.key}
+                        disabled={disabled}
                         onClick={() => onNavigate(doc.key)}
                         sx={{ py: 0.5, '&.Mui-selected': { bgcolor: '#e3f2fd' } }}
                     >

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-    Box, Typography, Button, Grid, TextField, MenuItem, Paper, Divider,
+    Box, Typography, Button, Grid, TextField, MenuItem, Paper,
     Accordion, AccordionSummary, AccordionDetails, IconButton, Chip,
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-    Dialog, DialogTitle, DialogContent, DialogActions, Alert
+    Alert
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -11,7 +11,6 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
-import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import { useNavigate, useParams } from 'react-router-dom';
 import { mastersAPI, companiesAPI, clientsAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -55,12 +54,13 @@ export default function MasterFormPage() {
     const { id, docType } = useParams();
     const requestedDoc = docType || 'edit';
     const currentDoc = SUPPORTED_DOCUMENT_TYPES.has(requestedDoc) ? requestedDoc : 'edit';
+    const activeMasterId = useRef(id);
+    activeMasterId.current = id;
 
     const [master, setMaster] = useState(null);
     const [bankAccounts, setBankAccounts] = useState([]);
-    const [saving, setSaving] = useState(false);
-    const [documentSaving, setDocumentSaving] = useState(false);
-    const documentSaveInFlight = useRef(false);
+    const [pendingSave, setPendingSave] = useState(null);
+    const saveInFlight = useRef(false);
     const routeKeyRef = useRef(null);
     const saveMessageTimer = useRef(null);
     const [saveMessage, setSaveMessage] = useState('');
@@ -68,8 +68,6 @@ export default function MasterFormPage() {
     const [containerDialogOpen, setContainerDialogOpen] = useState(false);
     const [editingContainer, setEditingContainer] = useState(null);
     const [restoringContainerConflict, setRestoringContainerConflict] = useState(false);
-    const [documentDialogOpen, setDocumentDialogOpen] = useState(false);
-    const [selectedDocuments, setSelectedDocuments] = useState([]);
 
     const [clients, setClients] = useState([]);
     const [companies, setCompanies] = useState([]);
@@ -166,6 +164,7 @@ export default function MasterFormPage() {
     });
 
     useEffect(() => {
+        setMaster(null);
         if (id) loadMaster();
         if (selectedCompany) loadBankAccounts();
     }, [id, selectedCompany]);
@@ -185,6 +184,18 @@ export default function MasterFormPage() {
         }
     };
 
+    const beginSave = (operation) => {
+        if (saveInFlight.current) return false;
+        saveInFlight.current = true;
+        setPendingSave(operation);
+        return true;
+    };
+
+    const finishSave = () => {
+        saveInFlight.current = false;
+        setPendingSave(null);
+    };
+
     const clearConflictDraft = () => {
         setConflictDraft(null);
         setDocumentDraft({});
@@ -192,8 +203,10 @@ export default function MasterFormPage() {
     };
 
     const loadMaster = async () => {
+        const requestedId = id;
         try {
-            const response = await mastersAPI.getById(id);
+            const response = await mastersAPI.getById(requestedId);
+            if (activeMasterId.current !== requestedId) return null;
             const m = response.data;
             setMaster(m);
 
@@ -224,17 +237,9 @@ export default function MasterFormPage() {
             populated.version = m.version;
             setFormData(populated);
 
-            // Load selected documents
-            if (m.documents) {
-                const docTypes = [...new Set(
-                    m.documents
-                        .filter(d => d.is_selected && SUPPORTED_DOCUMENT_TYPES.has(d.document_type))
-                        .map(d => d.document_type)
-                )];
-                setSelectedDocuments(docTypes);
-            }
             return m;
         } catch (err) {
+            if (activeMasterId.current !== requestedId) return null;
             console.error('Failed to load master:', err);
             return null;
         }
@@ -273,6 +278,7 @@ export default function MasterFormPage() {
     }, [id, currentDoc]);
 
     const handleDocNavigate = (docKey) => {
+        if (saveInFlight.current) return;
         if (!SUPPORTED_DOCUMENT_TYPES.has(docKey)) {
             showSaveMessage('Unsupported document type.');
             return;
@@ -342,17 +348,10 @@ export default function MasterFormPage() {
             next.version = canonical.version;
             return next;
         });
-        if (canonical.documents) {
-            setSelectedDocuments([...new Set(
-                canonical.documents
-                    .filter(document => document.is_selected && SUPPORTED_DOCUMENT_TYPES.has(document.document_type))
-                    .map(document => document.document_type)
-            )]);
-        }
     };
 
     const handleSave = async (draftOverride = null) => {
-        setSaving(true);
+        if (!beginSave('Master')) return;
         showSaveMessage('');
         let attemptedPayload;
         try {
@@ -402,14 +401,14 @@ export default function MasterFormPage() {
                 showSaveMessage('Conflict: another user changed this Master. Latest data loaded; unsaved edits remain available for review before retrying.');
             } else {
                 showSaveMessage('Error saving. Please try again.');
-                throw err;
             }
         } finally {
-            setSaving(false);
+            finishSave();
         }
     };
 
     const handleRestoreConflictDraft = () => {
+        if (saveInFlight.current) return;
         if (!conflictMatchesCurrentView()) return;
 
         if (conflictDraft.type === 'root') {
@@ -423,8 +422,12 @@ export default function MasterFormPage() {
                 const latestContainer = master?.containers?.find(container =>
                     String(container.id) === String(conflictDraft.containerId)
                 );
+                if (!latestContainer) {
+                    showSaveMessage('Container no longer exists. Reload the Master before retrying.');
+                    return;
+                }
                 setEditingContainer({
-                    ...(latestContainer || { id: conflictDraft.containerId }),
+                    ...latestContainer,
                     ...(conflictDraft.data || {})
                 });
             } else {
@@ -436,8 +439,6 @@ export default function MasterFormPage() {
             const fields = conflictDraft.saveParts?.fields || conflictDraft.data || {};
             setFormData(previous => ({ ...previous, ...fields, version: master?.version }));
             setDocumentDraft(previous => ({ ...previous, ...fields }));
-        } else if (conflictDraft.type === 'documents') {
-            setSelectedDocuments(conflictDraft.documentTypes || []);
         } else if (conflictDraft.type === 'container-delete') {
             showSaveMessage('Delete intent remains pending. Retry deletion with the current Master version.');
             return;
@@ -447,32 +448,42 @@ export default function MasterFormPage() {
     };
 
     const handleDiscardConflictDraft = () => {
+        if (saveInFlight.current) return;
         clearConflictDraft();
         if (master) installCanonicalMaster(master, { clearDraft: true, clearConflict: false });
         showSaveMessage('');
     };
 
     const handleAddContainer = () => {
+        if (saveInFlight.current) return;
         clearConflictDraft();
         setEditingContainer(null);
         setContainerDialogOpen(true);
     };
 
     const handleEditContainer = (container) => {
+        if (saveInFlight.current) return;
         clearConflictDraft();
         setEditingContainer(container);
         setContainerDialogOpen(true);
     };
 
     const handleCloseContainerDialog = () => {
+        if (saveInFlight.current) return;
         setContainerDialogOpen(false);
         setEditingContainer(null);
-        if (restoringContainerConflict) clearConflictDraft();
+        if (restoringContainerConflict) {
+            clearConflictDraft();
+            showSaveMessage('');
+        }
         setRestoringContainerConflict(false);
     };
 
     const handleDeleteContainer = async (containerId, { skipConfirmation = false } = {}) => {
+        if (saveInFlight.current) return;
         if (!skipConfirmation && !window.confirm('Delete this container?')) return;
+        if (!beginSave('container deletion')) return;
+        showSaveMessage('');
         try {
             if (!master?.version) throw new Error('Master version is unavailable. Reload before saving.');
             const response = await mastersAPI.deleteContainer(id, containerId, master.version);
@@ -495,7 +506,17 @@ export default function MasterFormPage() {
                         return;
                     }
                 } else {
-                    await loadMaster();
+                    const reloaded = await loadMaster();
+                    if (!reloaded) {
+                        clearConflictDraft();
+                        showSaveMessage('Could not load latest Master. Reload before retrying deletion.');
+                        return;
+                    }
+                    if (!reloaded.containers?.some(container => String(container.id) === String(containerId))) {
+                        clearConflictDraft();
+                        showSaveMessage('Container was already deleted by another user. Latest data loaded.');
+                        return;
+                    }
                 }
                 setConflictDraft({
                     type: 'container-delete',
@@ -506,11 +527,15 @@ export default function MasterFormPage() {
                 showSaveMessage('Conflict: another user changed this Master. Latest data loaded; retry container deletion when ready.');
             } else if (err.response?.status === 404) {
                 const latest = await loadMaster();
+                clearConflictDraft();
+                if (!latest) {
+                    showSaveMessage('Could not load latest Master. Deletion was not confirmed; reload before retrying.');
+                    return;
+                }
                 const stillExists = latest?.containers?.some(container =>
                     String(container.id) === String(containerId)
                 );
                 if (!stillExists) {
-                    clearConflictDraft();
                     showSaveMessage('Container was already deleted. Latest data loaded.');
                 } else {
                     showSaveMessage('Container could not be deleted. Latest data loaded.');
@@ -518,10 +543,14 @@ export default function MasterFormPage() {
             } else {
                 showSaveMessage('Error deleting container.');
             }
+        } finally {
+            finishSave();
         }
     };
 
     const handleContainerSave = async (containerData) => {
+        if (!beginSave('container')) return;
+        showSaveMessage('');
         try {
             if (!master?.version) throw new Error('Master version is unavailable. Reload before saving.');
             const payload = { ...containerData, version: master.version };
@@ -536,93 +565,61 @@ export default function MasterFormPage() {
         } catch (err) {
             console.error('Failed to save container:', err);
             if (err.response?.status === 409) {
+                const latest = err.response.data?.master || await loadMaster();
+                const targetDeleted = Boolean(editingContainer && latest && !latest.containers?.some(container =>
+                    String(container.id) === String(editingContainer.id)
+                ));
                 setConflictDraft({
                     type: 'container',
                     masterId: id,
                     document: 'edit',
                     baseVersion: master?.version,
                     data: cloneValue(containerData),
-                    containerId: editingContainer?.id || null
+                    containerId: targetDeleted ? null : editingContainer?.id || null
                 });
-                const latest = err.response.data?.master;
                 if (latest) installCanonicalMaster(latest, { clearDraft: false, clearConflict: false });
-                else await loadMaster();
-                showSaveMessage('Conflict: another user changed this Master. Latest data loaded; unsaved container edits remain available for review before retrying.');
+                if (targetDeleted) {
+                    setContainerDialogOpen(false);
+                    setEditingContainer(null);
+                }
+                showSaveMessage(!latest
+                    ? 'Could not load latest Master. Unsaved container edits remain in the dialog; reload before retrying.'
+                    : targetDeleted
+                        ? 'Conflict: container was deleted by another user. Unsaved edits can be reviewed as a new container.'
+                        : 'Conflict: another user changed this Master. Latest data loaded; unsaved container edits remain available for review before retrying.');
             } else if (err.response?.status === 404 && editingContainer) {
                 const latest = await loadMaster();
+                if (!latest) {
+                    showSaveMessage('Could not load latest Master. Unsaved container edits remain in the dialog; reload before retrying.');
+                    return;
+                }
                 const stillExists = latest?.containers?.some(container =>
                     String(container.id) === String(editingContainer.id)
                 );
-                setContainerDialogOpen(false);
-                setEditingContainer(null);
-                clearConflictDraft();
-                showSaveMessage(stillExists
-                    ? 'Container could not be saved. Reloaded latest Master data.'
-                    : 'Container was deleted by another user. Latest data loaded; start a new container if needed.');
+                if (stillExists) {
+                    showSaveMessage('Container could not be saved. Latest Master loaded; review edits before retrying.');
+                } else {
+                    setConflictDraft({
+                        type: 'container',
+                        masterId: id,
+                        document: 'edit',
+                        baseVersion: master?.version,
+                        data: cloneValue(containerData),
+                        containerId: null
+                    });
+                    setContainerDialogOpen(false);
+                    setEditingContainer(null);
+                    showSaveMessage('Container was deleted by another user. Unsaved edits can be reviewed as a new container.');
+                }
             } else {
                 showSaveMessage('Error saving container: ' + (err.response?.data?.error || err.message));
             }
+        } finally {
+            finishSave();
         }
     };
 
-    const handleDocumentsSave = async () => {
-        try {
-            if (!master?.version) throw new Error('Master version is unavailable. Reload before saving.');
-            const attemptedDocuments = [...selectedDocuments];
-            const response = await mastersAPI.setDocuments(id, attemptedDocuments, master.version);
-            installCanonicalMaster(canonicalMasterFromResponse(response));
-            setDocumentDialogOpen(false);
-        } catch (err) {
-            console.error('Failed to save documents:', err);
-            if (err.response?.status === 409) {
-                setConflictDraft({
-                    type: 'documents',
-                    baseVersion: master?.version,
-                    documentTypes: [...selectedDocuments]
-                });
-                const latest = err.response.data?.master;
-                if (latest) installCanonicalMaster(latest, { clearDraft: false, clearConflict: false });
-                else await loadMaster();
-                showSaveMessage('Conflict: another user changed this Master. Latest document selection loaded; unsaved selection remains available for review before retrying.');
-            } else {
-                showSaveMessage('Error saving selected documents.');
-            }
-        }
-    };
-
-    const handleGenerateAllPDFs = async () => {
-        for (const docType of selectedDocuments) {
-            try {
-                await mastersAPI.generatePDF(id, docType);
-            } catch (err) {
-                console.error(`Failed to generate ${docType}:`, err);
-                alert(`Failed to generate ${docType}. It may not be implemented yet.`);
-            }
-        }
-        alert('All documents generated and saved to client folder.');
-    };
-
-    const handleOpenSinglePDF = async (docType) => {
-        try {
-            const response = await mastersAPI.generatePDF(id, docType);
-            const blob = new Blob([response.data], { type: 'application/pdf' });
-            const url = window.URL.createObjectURL(blob);
-            window.open(url, '_blank');
-        } catch (err) {
-            console.error(`Failed to open ${docType}:`, err);
-            alert(`Failed to generate ${docType}. It may not be implemented yet.`);
-        }
-    };
-
-    const handleDocToggle = (docType) => {
-        setSelectedDocuments(prev =>
-            prev.includes(docType)
-                ? prev.filter(d => d !== docType)
-                : [...prev, docType]
-        );
-    };
-
-    if (!master && id) {
+    if (id && (!master || String(master.id) !== String(id))) {
         return <Box sx={{ p: 3 }}><Typography>Loading...</Typography></Box>;
     }
 
@@ -653,10 +650,9 @@ export default function MasterFormPage() {
             }
         };
 
-            const handleDocSave = async (saveParts = {}) => {
-            if (documentSaveInFlight.current) return;
-            documentSaveInFlight.current = true;
-            setDocumentSaving(true);
+        const handleDocSave = async (saveParts = {}) => {
+            if (!beginSave('document')) return;
+            showSaveMessage('');
             const hasFields = Object.prototype.hasOwnProperty.call(saveParts, 'fields');
             const attemptedSaveParts = cloneValue(saveParts);
             try {
@@ -676,6 +672,7 @@ export default function MasterFormPage() {
                 delete payload.consignor_id;
                 delete payload.consignee_id;
                 delete payload.buyer_id;
+                if (currentDoc === 'CI') delete payload.vessel_no;
                 // Convert empty strings to null
                 Object.keys(payload).forEach(k => {
                     if (payload[k] === '') payload[k] = null;
@@ -709,13 +706,30 @@ export default function MasterFormPage() {
                     }
                     showSaveMessage('Conflict: another user changed this Master. Latest data loaded; unsaved edits remain available for review before retrying.');
                     throw err;
+                } else if (err.response?.status === 404 && currentDoc === 'VGM' && saveParts.container?.id) {
+                    const latest = await loadMaster();
+                    setConflictDraft({
+                        type: 'document',
+                        masterId: id,
+                        document: currentDoc,
+                        baseVersion: master?.version,
+                        saveParts: attemptedSaveParts
+                    });
+                    const targetExists = latest?.containers?.some(container =>
+                        String(container.id) === String(saveParts.container.id)
+                    );
+                    showSaveMessage(!latest
+                        ? 'Could not load latest Master. Unsaved VGM edits remain available; reload before retrying.'
+                        : targetExists
+                            ? 'Error saving VGM. Latest Master loaded; review the unsaved edits before retrying.'
+                            : 'VGM container was deleted. Latest Master loaded; review your edits and select another container before saving.');
+                    throw err;
                 } else {
                     showSaveMessage('Error saving document: ' + (err.response?.data?.error || err.message));
                     throw err;
                 }
             } finally {
-                documentSaveInFlight.current = false;
-                setDocumentSaving(false);
+                finishSave();
             }
         };
 
@@ -765,40 +779,43 @@ export default function MasterFormPage() {
         };
 
         return (
-            <Box sx={{ display: 'flex', gap: 2, p: 2 }} aria-busy={documentSaving}>
+            <Box sx={{ display: 'flex', gap: 2, p: 2 }} aria-busy={Boolean(pendingSave)}>
                 <Box sx={{ flex: 1 }}>
+                    {pendingSave && <Alert severity="info" role="status" sx={{ mb: 2 }}>Saving {pendingSave}...</Alert>}
                     {saveMessage && (
-                        <Alert severity={saveMessage.startsWith('Conflict:') ? 'warning' : 'error'} sx={{ mb: 2 }}>
+                        <Alert severity={saveMessage.startsWith('Conflict:') ? 'warning' : saveMessage.startsWith('Saved') ? 'success' : 'error'} sx={{ mb: 2 }}>
                             {saveMessage}
                             {conflictMatchesCurrentView() && (
                                 <>
                                     {' Unsaved edits remain preserved locally for review before retrying.'}
-                                    <Button size="small" sx={{ ml: 1 }} onClick={handleRestoreConflictDraft}>
+                                    <Button size="small" sx={{ ml: 1 }} onClick={handleRestoreConflictDraft} disabled={Boolean(pendingSave)}>
                                         Restore unsaved edits
                                     </Button>
-                                    <Button size="small" sx={{ ml: 1 }} onClick={handleDiscardConflictDraft}>
+                                    <Button size="small" sx={{ ml: 1 }} onClick={handleDiscardConflictDraft} disabled={Boolean(pendingSave)}>
                                         Discard unsaved edits
                                     </Button>
                                 </>
                             )}
                         </Alert>
                     )}
-                    {renderDocForm()}
+                    <Box component="fieldset" disabled={Boolean(pendingSave)} sx={{ border: 0, p: 0, m: 0, minWidth: 0 }}>
+                        {renderDocForm()}
+                    </Box>
                 </Box>
                 <Box sx={{ width: 200, flexShrink: 0 }}>
-                    <DocumentSidebar currentDoc={currentDoc} masterId={id} onNavigate={handleDocNavigate} />
+                    <DocumentSidebar currentDoc={currentDoc} masterId={id} onNavigate={handleDocNavigate} disabled={Boolean(pendingSave)} />
                 </Box>
             </Box>
         );
     }
 
     return (
-        <Box sx={{ display: 'flex', gap: 2, p: 2 }}>
+        <Box sx={{ display: 'flex', gap: 2, p: 2 }} aria-busy={Boolean(pendingSave)}>
             <Box sx={{ flex: 1 }}>
             {/* Header */}
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/masters')}>
+                    <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/masters')} disabled={Boolean(pendingSave)}>
                         Back
                     </Button>
                     <Typography variant="h5" fontWeight="bold">
@@ -808,25 +825,31 @@ export default function MasterFormPage() {
                     {master?.client_name && <Chip label={master.client_name} color="primary" variant="outlined" />}
                 </Box>
                 <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                    {pendingSave && <Alert severity="info" role="status" sx={{ py: 0 }}>Saving {pendingSave}...</Alert>}
                     {saveMessage && (
                         <Alert
                             severity={saveMessage.startsWith('Conflict:')
                                 ? 'warning'
-                                : saveMessage.includes('Error') ? 'error' : 'success'}
+                                : /^(Saved|Container deleted successfully|Container was already deleted|Unsaved edits restored)/.test(saveMessage) ? 'success' : 'error'}
                             sx={{ py: 0 }}
                         >
                             {saveMessage}
                             {conflictMatchesCurrentView() && conflictDraft.type === 'container-delete' && (
-                                <Button size="small" sx={{ ml: 1 }} onClick={() => handleDeleteContainer(conflictDraft.containerId, { skipConfirmation: true })}>
-                                    Retry delete container
-                                </Button>
+                                <>
+                                    <Button size="small" sx={{ ml: 1 }} onClick={() => handleDeleteContainer(conflictDraft.containerId, { skipConfirmation: true })} disabled={Boolean(pendingSave)}>
+                                        Retry delete container
+                                    </Button>
+                                    <Button size="small" sx={{ ml: 1 }} onClick={handleDiscardConflictDraft} disabled={Boolean(pendingSave)}>
+                                        Discard delete intent
+                                    </Button>
+                                </>
                             )}
                             {conflictMatchesCurrentView() && (conflictDraft.type === 'root' || conflictDraft.type === 'container') && (
                                 <>
-                                    <Button size="small" sx={{ ml: 1 }} onClick={handleRestoreConflictDraft}>
+                                    <Button size="small" sx={{ ml: 1 }} onClick={handleRestoreConflictDraft} disabled={Boolean(pendingSave)}>
                                         Restore unsaved edits
                                     </Button>
-                                    <Button size="small" sx={{ ml: 1 }} onClick={handleDiscardConflictDraft}>
+                                    <Button size="small" sx={{ ml: 1 }} onClick={handleDiscardConflictDraft} disabled={Boolean(pendingSave)}>
                                         Discard unsaved edits
                                     </Button>
                                 </>
@@ -837,13 +860,14 @@ export default function MasterFormPage() {
                         variant="contained"
                         startIcon={<SaveIcon />}
                         onClick={() => handleSave()}
-                        disabled={saving}
+                        disabled={Boolean(pendingSave)}
                     >
-                        {saving ? 'Saving...' : 'Save'}
+                        {pendingSave === 'Master' ? 'Saving...' : 'Save'}
                     </Button>
                 </Box>
             </Box>
 
+            <Box component="fieldset" disabled={Boolean(pendingSave)} sx={{ border: 0, p: 0, m: 0, minWidth: 0 }}>
             {/* Consignor Details */}
             <Accordion defaultExpanded>
                 <AccordionSummary expandIcon={<ExpandMoreIcon />}>
@@ -1220,6 +1244,7 @@ export default function MasterFormPage() {
                 )}
             </Paper>
 
+            </Box>
             {/* Container Dialog */}
             <ContainerDialog
                 open={containerDialogOpen}
@@ -1229,11 +1254,12 @@ export default function MasterFormPage() {
                 masterData={formData}
                 weighbridges={weighbridges}
                 conflictDraft={restoringContainerConflict ? conflictDraft : null}
+                saving={Boolean(pendingSave)}
             />
             </Box>
             {id && (
                 <Box sx={{ width: 200, flexShrink: 0 }}>
-                    <DocumentSidebar currentDoc={currentDoc} masterId={id} onNavigate={handleDocNavigate} />
+                    <DocumentSidebar currentDoc={currentDoc} masterId={id} onNavigate={handleDocNavigate} disabled={Boolean(pendingSave)} />
                 </Box>
             )}
         </Box>

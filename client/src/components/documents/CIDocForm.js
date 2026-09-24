@@ -2,16 +2,24 @@ import React from 'react';
 import { Box, Typography, Button, Grid, TextField, Paper, MenuItem } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import useDocumentOverrides from './useDocumentOverrides';
 
 /**
  * CI Document Form - Commercial Invoice
  */
-export default function CIDocForm({ data, onChange, onSave, onDownloadPDF }) {
+export default function CIDocForm({ data, onChange, onSave, onDownloadPDF, conflictDraft }) {
+    const [overrides, setOverrides] = useDocumentOverrides(data, 'CI', conflictDraft);
     const handleChange = (field) => (e) => {
         onChange({ ...data, [field]: e.target.value });
     };
 
-    const handleSave = () => onSave({ fields: data });
+    const handleSave = async () => {
+        try {
+            await onSave({ fields: data, overrides });
+        } catch (err) {
+            // MasterFormPage displays save errors and keeps the unsaved edits.
+        }
+    };
 
     return (
         <Box>
@@ -87,8 +95,17 @@ export default function CIDocForm({ data, onChange, onSave, onDownloadPDF }) {
                         <TextField fullWidth label="Shipment Date" type="date" value={data.shipment_date || ''} onChange={handleChange('shipment_date')} InputLabelProps={{ shrink: true }} />
                     </Grid>
                     <Grid item xs={12} sm={3}>
-                        <TextField fullWidth label="Vessel No." value={data.vessel_no || ''} onChange={handleChange('vessel_no')} />
+                        <TextField fullWidth label="Vessel No." value={overrides.vessel_no ?? data.vessel_no ?? ''}
+                            onChange={e => setOverrides(previous => ({ ...previous, vessel_no: e.target.value }))}
+                            helperText="CI only; does not change the Master or other documents." />
                     </Grid>
+                    {overrides.vessel_no !== undefined && overrides.vessel_no !== null && (
+                        <Grid item xs={12} sm={3}>
+                            <Button onClick={() => setOverrides(previous => ({ ...previous, vessel_no: null }))}>
+                                Use Master vessel number
+                            </Button>
+                        </Grid>
+                    )}
                     <Grid item xs={12} sm={3}>
                         <TextField fullWidth label="Bill of Lading No." value={data.bill_of_lading_no || ''} onChange={handleChange('bill_of_lading_no')} />
                     </Grid>

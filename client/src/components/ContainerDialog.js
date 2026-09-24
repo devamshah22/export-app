@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
     Dialog, DialogTitle, DialogContent, DialogActions, Button, Grid, TextField,
-    Typography, Divider, IconButton, Box, Paper, MenuItem
+    Typography, IconButton, Box, Paper, MenuItem
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -27,7 +27,8 @@ export default function ContainerDialog({
     container,
     masterData,
     weighbridges = [],
-    conflictDraft
+    conflictDraft,
+    saving = false
 }) {
     const [formData, setFormData] = useState({
         container_no: '',
@@ -155,6 +156,11 @@ export default function ContainerDialog({
     };
 
     const handleSave = () => {
+        if (products.some(p => p.total_packages !== '' &&
+            (!Number.isSafeInteger(Number(p.total_packages)) || Number(p.total_packages) < 0))) {
+            window.alert('Package Count must be a non-negative whole number.');
+            return;
+        }
         const { weighbridge_id, ...persistedFormData } = formData;
         const payload = {
             ...persistedFormData,
@@ -167,8 +173,8 @@ export default function ContainerDialog({
             products: products.map(p => ({
                 ...p,
                 tare_weight_per_bag: p.tare_weight_per_bag ? parseFloat(p.tare_weight_per_bag) : null,
-                num_packages: p.total_packages ? parseInt(p.total_packages) : null,
-                total_packages: p.total_packages ? parseInt(p.total_packages) : null,
+                num_packages: p.total_packages !== '' ? Number(p.total_packages) : null,
+                total_packages: p.total_packages !== '' ? Number(p.total_packages) : null,
                 net_weight: p.net_weight ? parseFloat(p.net_weight) : null,
                 unit_rate: p.unit_rate ? parseFloat(p.unit_rate) : null,
             }))
@@ -177,9 +183,9 @@ export default function ContainerDialog({
     };
 
     return (
-        <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
+        <Dialog open={open} onClose={saving ? undefined : onClose} maxWidth="lg" fullWidth>
             <DialogTitle>{container ? 'Edit Container' : 'Add Container'}</DialogTitle>
-            <DialogContent>
+            <DialogContent component="fieldset" disabled={saving} sx={{ border: 0, minWidth: 0 }}>
                 {/* Container Details */}
                 <Typography variant="subtitle1" fontWeight="bold" sx={{ mt: 1, mb: 1 }}>
                     Container Details
@@ -293,6 +299,9 @@ export default function ContainerDialog({
                             <Grid item xs={12} sm={3}>
                                 <TextField fullWidth size="small" label="Description" value={product.description} onChange={handleProductChange(index, 'description')} />
                             </Grid>
+                            <Grid item xs={6} sm={3}>
+                                <TextField fullWidth size="small" label="Package Count" type="number" slotProps={{ htmlInput: { min: 0, step: 1 } }} value={product.total_packages} onChange={handleProductChange(index, 'total_packages')} />
+                            </Grid>
                             <Grid item xs={6} sm={2}>
                                 <TextField select fullWidth size="small" label="UOM" value={product.uom} onChange={handleProductChange(index, 'uom')}>
                                     <MenuItem value="MT">MT</MenuItem>
@@ -308,9 +317,9 @@ export default function ContainerDialog({
                 ))}
             </DialogContent>
             <DialogActions>
-                <Button onClick={onClose}>Cancel</Button>
-                <Button variant="contained" onClick={handleSave}>
-                    {container ? 'Update Container' : 'Add Container'}
+                <Button onClick={onClose} disabled={saving}>Cancel</Button>
+                <Button variant="contained" onClick={handleSave} disabled={saving}>
+                    {saving ? 'Saving...' : container ? 'Update Container' : 'Add Container'}
                 </Button>
             </DialogActions>
         </Dialog>

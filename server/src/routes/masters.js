@@ -75,7 +75,7 @@ const OVERRIDE_FIELDS = Object.freeze({
     ]),
     VGM: new Set(['authorized_official', 'contact_details']),
     COA: new Set(),
-    CI: new Set(),
+    CI: new Set(['vessel_no']),
     PL: new Set()
 });
 
@@ -121,6 +121,10 @@ function validateOverridePayload(docType, overrides) {
             throw httpError(400, `Override field '${key}' must be a scalar value.`);
         }
     }
+}
+
+function shouldDeleteOverride(docType, value) {
+    return value === null || value === undefined || (value === '' && docType !== 'CI');
 }
 
 async function assertMasterVersion(connection, masterId, expectedVersion) {
@@ -561,7 +565,7 @@ router.post('/:id/overrides/:docType', async (req, res) => runMutation(res, 'Sav
     validateOverridePayload(docType, overrides);
     await assertMasterVersion(connection, masterId, req.body.version);
     for (const [key, value] of Object.entries(overrides)) {
-        if (value === null || value === undefined || value === '') {
+        if (shouldDeleteOverride(docType, value)) {
             await connection.query(
                 'DELETE FROM document_overrides WHERE master_id = ? AND document_type = ? AND field_key = ?',
                 [masterId, docType, key]
@@ -586,6 +590,9 @@ router.post('/:id/document-save', async (req, res) => runMutation(res, 'Save doc
     if (!isPlainObject(fields)) throw httpError(400, 'fields must be an object.');
     if (overrides !== undefined && !isPlainObject(overrides)) throw httpError(400, 'Override data must be an object.');
     if (container !== undefined && !isPlainObject(container)) throw httpError(400, 'Container data must be an object.');
+    if (documentType === 'CI' && fields.vessel_no !== undefined) {
+        throw httpError(400, 'CI vessel_no must be saved as a document override.');
+    }
     await assertMasterVersion(connection, masterId, version);
 
     const updates = [];
@@ -609,7 +616,7 @@ router.post('/:id/document-save', async (req, res) => runMutation(res, 'Save doc
     if (overrides !== undefined) {
         validateOverridePayload(documentType, overrides);
         for (const [key, value] of Object.entries(overrides)) {
-            if (value === null || value === undefined || value === '') {
+            if (shouldDeleteOverride(documentType, value)) {
                 await connection.query(
                     'DELETE FROM document_overrides WHERE master_id = ? AND document_type = ? AND field_key = ?',
                     [masterId, documentType, key]
