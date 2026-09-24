@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     Box, Typography, Button, Grid, TextField, Paper, MenuItem, Alert
 } from '@mui/material';
@@ -25,6 +25,7 @@ export default function VGMDocForm({ data, onChange, onSave, masterId, conflictD
         ? conflictDraft.saveParts?.container
         : null;
     const [selectedContainerId, setSelectedContainerId] = useState('');
+    const selectionLost = useRef(false);
     const [containerEdits, setContainerEdits] = useState({});
     const [overrides, setOverrides] = useDocumentOverrides(data, 'VGM', conflictDraft);
     const annexureCIec = data.overrides?.ANNEXURE_C?.iec_no || '';
@@ -35,15 +36,18 @@ export default function VGMDocForm({ data, onChange, onSave, masterId, conflictD
         const selectedExists = containers.some(container => String(container.id) === String(selectedContainerId));
         if (attemptedExists && (!selectedContainerId || String(selectedContainerId) === String(attemptedContainer.id))) {
             setSelectedContainerId(attemptedContainer.id);
-        } else if (attemptedContainer?.id && !attemptedExists && !selectedExists) {
+        } else if ((attemptedContainer?.id && !attemptedExists && !selectedExists) || (selectedContainerId && !selectedExists)) {
+            if (selectedContainerId && !selectedExists) selectionLost.current = true;
             setSelectedContainerId('');
-        } else if (!selectedContainerId && containers.length > 0 && !attemptedContainer?.id) {
+        } else if (!selectedContainerId && containers.length > 0 && !attemptedContainer?.id && !selectionLost.current) {
             setSelectedContainerId(containers[0].id);
         }
     }, [attemptedContainer, containers, selectedContainerId]);
 
     const selectedContainer = containers.find(c => String(c.id) === String(selectedContainerId)) || null;
-    const attemptedContainerMissing = Boolean(attemptedContainer?.id) && !selectedContainer && containers.length > 0;
+    const attemptedContainerMissing = Boolean(attemptedContainer?.id)
+        && !containers.some(container => String(container.id) === String(attemptedContainer.id))
+        && !selectedContainer;
 
     useEffect(() => {
         if (selectedContainer) {
@@ -139,12 +143,20 @@ export default function VGMDocForm({ data, onChange, onSave, masterId, conflictD
                         Attempted container from unsaved VGM edits no longer exists. Select a current container before saving.
                     </Alert>
                 )}
+                {selectionLost.current && !selectedContainer && !attemptedContainerMissing && (
+                    <Alert severity="warning" sx={{ mb: 2 }}>
+                        Selected container no longer exists. Select a current container before saving.
+                    </Alert>
+                )}
                 {containers.length === 0 ? (
                     <Typography color="text.secondary">No containers added to this Master. Add containers in the Master form first.</Typography>
                 ) : (
                     <TextField
                         select fullWidth label="Container" value={selectedContainerId || ''}
-                        onChange={(event) => setSelectedContainerId(event.target.value)}
+                        onChange={(event) => {
+                            selectionLost.current = false;
+                            setSelectedContainerId(event.target.value);
+                        }}
                         helperText="One VGM document is generated per container."
                     >
                         {containers.map((container) => (

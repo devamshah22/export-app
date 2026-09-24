@@ -55,6 +55,8 @@ export default function MasterFormPage() {
     const { id, docType } = useParams();
     const requestedDoc = docType || 'edit';
     const currentDoc = SUPPORTED_DOCUMENT_TYPES.has(requestedDoc) ? requestedDoc : 'edit';
+    const activeMasterId = useRef(id);
+    activeMasterId.current = id;
 
     const [master, setMaster] = useState(null);
     const [bankAccounts, setBankAccounts] = useState([]);
@@ -165,6 +167,7 @@ export default function MasterFormPage() {
     });
 
     useEffect(() => {
+        setMaster(null);
         if (id) loadMaster();
         if (selectedCompany) loadBankAccounts();
     }, [id, selectedCompany]);
@@ -203,8 +206,10 @@ export default function MasterFormPage() {
     };
 
     const loadMaster = async () => {
+        const requestedId = id;
         try {
-            const response = await mastersAPI.getById(id);
+            const response = await mastersAPI.getById(requestedId);
+            if (activeMasterId.current !== requestedId) return null;
             const m = response.data;
             setMaster(m);
 
@@ -246,6 +251,7 @@ export default function MasterFormPage() {
             }
             return m;
         } catch (err) {
+            if (activeMasterId.current !== requestedId) return null;
             console.error('Failed to load master:', err);
             return null;
         }
@@ -435,8 +441,12 @@ export default function MasterFormPage() {
                 const latestContainer = master?.containers?.find(container =>
                     String(container.id) === String(conflictDraft.containerId)
                 );
+                if (!latestContainer) {
+                    showSaveMessage('Container no longer exists. Reload the Master before retrying.');
+                    return;
+                }
                 setEditingContainer({
-                    ...(latestContainer || { id: conflictDraft.containerId }),
+                    ...latestContainer,
                     ...(conflictDraft.data || {})
                 });
             } else {
@@ -483,7 +493,10 @@ export default function MasterFormPage() {
         if (saveInFlight.current) return;
         setContainerDialogOpen(false);
         setEditingContainer(null);
-        if (restoringContainerConflict) clearConflictDraft();
+        if (restoringContainerConflict) {
+            clearConflictDraft();
+            showSaveMessage('');
+        }
         setRestoringContainerConflict(false);
     };
 
@@ -491,6 +504,7 @@ export default function MasterFormPage() {
         if (saveInFlight.current) return;
         if (!skipConfirmation && !window.confirm('Delete this container?')) return;
         if (!beginSave('container deletion')) return;
+        showSaveMessage('');
         try {
             if (!master?.version) throw new Error('Master version is unavailable. Reload before saving.');
             const response = await mastersAPI.deleteContainer(id, containerId, master.version);
@@ -513,7 +527,17 @@ export default function MasterFormPage() {
                         return;
                     }
                 } else {
-                    await loadMaster();
+                    const reloaded = await loadMaster();
+                    if (!reloaded) {
+                        clearConflictDraft();
+                        showSaveMessage('Could not load latest Master. Reload before retrying deletion.');
+                        return;
+                    }
+                    if (!reloaded.containers?.some(container => String(container.id) === String(containerId))) {
+                        clearConflictDraft();
+                        showSaveMessage('Container was already deleted by another user. Latest data loaded.');
+                        return;
+                    }
                 }
                 setConflictDraft({
                     type: 'container-delete',
@@ -524,11 +548,15 @@ export default function MasterFormPage() {
                 showSaveMessage('Conflict: another user changed this Master. Latest data loaded; retry container deletion when ready.');
             } else if (err.response?.status === 404) {
                 const latest = await loadMaster();
+                clearConflictDraft();
+                if (!latest) {
+                    showSaveMessage('Could not load latest Master. Deletion was not confirmed; reload before retrying.');
+                    return;
+                }
                 const stillExists = latest?.containers?.some(container =>
                     String(container.id) === String(containerId)
                 );
                 if (!stillExists) {
-                    clearConflictDraft();
                     showSaveMessage('Container was already deleted. Latest data loaded.');
                 } else {
                     showSaveMessage('Container could not be deleted. Latest data loaded.');
@@ -543,6 +571,7 @@ export default function MasterFormPage() {
 
     const handleContainerSave = async (containerData) => {
         if (!beginSave('container')) return;
+        showSaveMessage('');
         try {
             if (!master?.version) throw new Error('Master version is unavailable. Reload before saving.');
             const payload = { ...containerData, version: master.version };
@@ -557,29 +586,52 @@ export default function MasterFormPage() {
         } catch (err) {
             console.error('Failed to save container:', err);
             if (err.response?.status === 409) {
+                const latest = err.response.data?.master || await loadMaster();
+                const targetDeleted = Boolean(editingContainer && latest && !latest.containers?.some(container =>
+                    String(container.id) === String(editingContainer.id)
+                ));
                 setConflictDraft({
                     type: 'container',
                     masterId: id,
                     document: 'edit',
                     baseVersion: master?.version,
                     data: cloneValue(containerData),
-                    containerId: editingContainer?.id || null
+                    containerId: targetDeleted ? null : editingContainer?.id || null
                 });
-                const latest = err.response.data?.master;
                 if (latest) installCanonicalMaster(latest, { clearDraft: false, clearConflict: false });
-                else await loadMaster();
-                showSaveMessage('Conflict: another user changed this Master. Latest data loaded; unsaved container edits remain available for review before retrying.');
+                if (targetDeleted) {
+                    setContainerDialogOpen(false);
+                    setEditingContainer(null);
+                }
+                showSaveMessage(!latest
+                    ? 'Could not load latest Master. Unsaved container edits remain in the dialog; reload before retrying.'
+                    : targetDeleted
+                        ? 'Conflict: container was deleted by another user. Unsaved edits can be reviewed as a new container.'
+                        : 'Conflict: another user changed this Master. Latest data loaded; unsaved container edits remain available for review before retrying.');
             } else if (err.response?.status === 404 && editingContainer) {
                 const latest = await loadMaster();
+                if (!latest) {
+                    showSaveMessage('Could not load latest Master. Unsaved container edits remain in the dialog; reload before retrying.');
+                    return;
+                }
                 const stillExists = latest?.containers?.some(container =>
                     String(container.id) === String(editingContainer.id)
                 );
-                setContainerDialogOpen(false);
-                setEditingContainer(null);
-                clearConflictDraft();
-                showSaveMessage(stillExists
-                    ? 'Container could not be saved. Reloaded latest Master data.'
-                    : 'Container was deleted by another user. Latest data loaded; start a new container if needed.');
+                if (stillExists) {
+                    showSaveMessage('Container could not be saved. Latest Master loaded; review edits before retrying.');
+                } else {
+                    setConflictDraft({
+                        type: 'container',
+                        masterId: id,
+                        document: 'edit',
+                        baseVersion: master?.version,
+                        data: cloneValue(containerData),
+                        containerId: null
+                    });
+                    setContainerDialogOpen(false);
+                    setEditingContainer(null);
+                    showSaveMessage('Container was deleted by another user. Unsaved edits can be reviewed as a new container.');
+                }
             } else {
                 showSaveMessage('Error saving container: ' + (err.response?.data?.error || err.message));
             }
@@ -649,7 +701,7 @@ export default function MasterFormPage() {
         );
     };
 
-    if (!master && id) {
+    if (id && (!master || String(master.id) !== String(id))) {
         return <Box sx={{ p: 3 }}><Typography>Loading...</Typography></Box>;
     }
 
@@ -682,6 +734,7 @@ export default function MasterFormPage() {
 
         const handleDocSave = async (saveParts = {}) => {
             if (!beginSave('document')) return;
+            showSaveMessage('');
             const hasFields = Object.prototype.hasOwnProperty.call(saveParts, 'fields');
             const attemptedSaveParts = cloneValue(saveParts);
             try {
@@ -733,6 +786,24 @@ export default function MasterFormPage() {
                         await loadMaster();
                     }
                     showSaveMessage('Conflict: another user changed this Master. Latest data loaded; unsaved edits remain available for review before retrying.');
+                    throw err;
+                } else if (err.response?.status === 404 && currentDoc === 'VGM' && saveParts.container?.id) {
+                    const latest = await loadMaster();
+                    setConflictDraft({
+                        type: 'document',
+                        masterId: id,
+                        document: currentDoc,
+                        baseVersion: master?.version,
+                        saveParts: attemptedSaveParts
+                    });
+                    const targetExists = latest?.containers?.some(container =>
+                        String(container.id) === String(saveParts.container.id)
+                    );
+                    showSaveMessage(!latest
+                        ? 'Could not load latest Master. Unsaved VGM edits remain available; reload before retrying.'
+                        : targetExists
+                            ? 'Error saving VGM. Latest Master loaded; review the unsaved edits before retrying.'
+                            : 'VGM container was deleted. Latest Master loaded; review your edits and select another container before saving.');
                     throw err;
                 } else {
                     showSaveMessage('Error saving document: ' + (err.response?.data?.error || err.message));
@@ -840,14 +911,19 @@ export default function MasterFormPage() {
                         <Alert
                             severity={saveMessage.startsWith('Conflict:')
                                 ? 'warning'
-                                : saveMessage.includes('Error') ? 'error' : 'success'}
+                                : /^(Saved|Container deleted successfully|Container was already deleted|Unsaved edits restored)/.test(saveMessage) ? 'success' : 'error'}
                             sx={{ py: 0 }}
                         >
                             {saveMessage}
                             {conflictMatchesCurrentView() && conflictDraft.type === 'container-delete' && (
-                                <Button size="small" sx={{ ml: 1 }} onClick={() => handleDeleteContainer(conflictDraft.containerId, { skipConfirmation: true })} disabled={Boolean(pendingSave)}>
-                                    Retry delete container
-                                </Button>
+                                <>
+                                    <Button size="small" sx={{ ml: 1 }} onClick={() => handleDeleteContainer(conflictDraft.containerId, { skipConfirmation: true })} disabled={Boolean(pendingSave)}>
+                                        Retry delete container
+                                    </Button>
+                                    <Button size="small" sx={{ ml: 1 }} onClick={handleDiscardConflictDraft} disabled={Boolean(pendingSave)}>
+                                        Discard delete intent
+                                    </Button>
+                                </>
                             )}
                             {conflictMatchesCurrentView() && (conflictDraft.type === 'root' || conflictDraft.type === 'container') && (
                                 <>

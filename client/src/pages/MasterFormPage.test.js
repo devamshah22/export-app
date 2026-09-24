@@ -314,6 +314,93 @@ test('preserves container delete intent and retries with canonical version', asy
     expect(screen.queryByRole('button', { name: /Retry delete container/i })).not.toBeInTheDocument();
 });
 
+test('discards pending container deletion without issuing a retry', async () => {
+    const initial = { ...baseMaster, containers: [{ id: 9, container_no: 'KEEP-ME', products: [] }] };
+    mastersAPI.getById.mockResolvedValue({ data: initial });
+    mastersAPI.deleteContainer.mockRejectedValueOnce(conflictResponse({ ...initial, version: 2 }));
+
+    renderPage();
+    await screen.findByText('KEEP-ME');
+    fireEvent.click(within(screen.getByText('KEEP-ME').closest('tr')).getAllByRole('button')[1]);
+    await screen.findByRole('button', { name: /Retry delete container/i });
+    fireEvent.click(screen.getByRole('button', { name: /Discard delete intent/i }));
+
+    expect(screen.queryByRole('button', { name: /Retry delete container/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByText('KEEP-ME')).toBeInTheDocument();
+    expect(mastersAPI.deleteContainer).toHaveBeenCalledTimes(1);
+});
+
+test('a 404 retry with no latest Master does not claim the container was deleted', async () => {
+    const initial = { ...baseMaster, containers: [{ id: 9, container_no: 'KEEP-ME', products: [] }] };
+    mastersAPI.getById.mockResolvedValueOnce({ data: initial }).mockRejectedValueOnce(new Error('offline'));
+    mastersAPI.deleteContainer
+        .mockRejectedValueOnce(conflictResponse({ ...initial, version: 2 }))
+        .mockRejectedValueOnce(Object.assign(new Error('Not found'), { response: { status: 404 } }));
+
+    renderPage();
+    await screen.findByText('KEEP-ME');
+    fireEvent.click(within(screen.getByText('KEEP-ME').closest('tr')).getAllByRole('button')[1]);
+    fireEvent.click(await screen.findByRole('button', { name: /Retry delete container/i }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/could not load latest Master/i));
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/already deleted/i);
+    expect(screen.queryByRole('button', { name: /Retry delete container/i })).not.toBeInTheDocument();
+    expect(mastersAPI.deleteContainer).toHaveBeenCalledTimes(2);
+});
+
+test('a 404 container update with no latest Master preserves the open editor', async () => {
+    const initial = { ...baseMaster, containers: [{ id: 9, container_no: 'EDIT-ME', products: [] }] };
+    mastersAPI.getById.mockResolvedValueOnce({ data: initial }).mockRejectedValueOnce(new Error('offline'));
+    mastersAPI.updateContainer.mockRejectedValueOnce(Object.assign(new Error('Not found'), { response: { status: 404 } }));
+
+    renderPage();
+    await screen.findByText('EDIT-ME');
+    fireEvent.click(within(screen.getByText('EDIT-ME').closest('tr')).getAllByRole('button')[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Save test container' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/could not load latest Master/i));
+    expect(screen.getByTestId('container-dialog')).toBeInTheDocument();
+    expect(screen.getByTestId('container-id')).toHaveTextContent('9');
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/was deleted/i);
+});
+
+test('a 404 for an already deleted container keeps the edit draft for a new add', async () => {
+    const initial = { ...baseMaster, containers: [{ id: 9, container_no: 'EDIT-ME', products: [] }] };
+    mastersAPI.getById.mockResolvedValueOnce({ data: initial }).mockResolvedValueOnce({ data: { ...baseMaster, version: 2 } });
+    mastersAPI.updateContainer.mockRejectedValueOnce(Object.assign(new Error('Not found'), { response: { status: 404 } }));
+
+    renderPage();
+    await screen.findByText('EDIT-ME');
+    fireEvent.click(within(screen.getByText('EDIT-ME').closest('tr')).getAllByRole('button')[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Save test container' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/container was deleted/i));
+    fireEvent.click(screen.getByRole('button', { name: /Restore unsaved edits/i }));
+    expect(screen.getByTestId('container-id')).toHaveTextContent('');
+    expect(screen.getByTestId('container-conflict')).toHaveTextContent('LOCAL-CONTAINER');
+    fireEvent.click(screen.getByRole('button', { name: 'Save test container' }));
+    await waitFor(() => expect(mastersAPI.addContainer.mock.calls[0][1]).toMatchObject({ version: 2 }));
+    expect(mastersAPI.updateContainer).toHaveBeenCalledTimes(1);
+});
+
+test('a 404 retry after another user deletes the container clears the retry action', async () => {
+    const initial = { ...baseMaster, containers: [{ id: 9, container_no: 'DELETE-ME', products: [] }] };
+    mastersAPI.getById.mockResolvedValueOnce({ data: initial }).mockResolvedValueOnce({ data: { ...baseMaster, version: 3 } });
+    mastersAPI.deleteContainer
+        .mockRejectedValueOnce(conflictResponse({ ...initial, version: 2 }))
+        .mockRejectedValueOnce(Object.assign(new Error('Not found'), { response: { status: 404 } }));
+
+    renderPage();
+    await screen.findByText('DELETE-ME');
+    fireEvent.click(within(screen.getByText('DELETE-ME').closest('tr')).getAllByRole('button')[1]);
+    fireEvent.click(await screen.findByRole('button', { name: /Retry delete container/i }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/already deleted/i));
+    expect(screen.queryByRole('button', { name: /Retry delete container/i })).not.toBeInTheDocument();
+    expect(mastersAPI.deleteContainer).toHaveBeenCalledTimes(2);
+});
+
 test('canceling a restored container conflict prevents draft reuse on new add', async () => {
     const latest = { ...baseMaster, version: 2, containers: [] };
     mastersAPI.addContainer.mockRejectedValueOnce(conflictResponse(latest));
@@ -332,6 +419,77 @@ test('canceling a restored container conflict prevents draft reuse on new add', 
     expect(screen.getByTestId('container-id')).toHaveTextContent('');
     expect(screen.getByTestId('container-name')).toHaveTextContent('');
     expect(screen.getByTestId('container-conflict')).toHaveTextContent('');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+});
+
+test('a deleted container in a 409 cannot be retried as an update', async () => {
+    const initial = { ...baseMaster, containers: [{ id: 9, container_no: 'REMOVED', products: [] }] };
+    mastersAPI.getById.mockResolvedValue({ data: initial });
+    mastersAPI.updateContainer.mockRejectedValueOnce(conflictResponse({ ...baseMaster, version: 2 }));
+
+    renderPage();
+    await screen.findByText('REMOVED');
+    fireEvent.click(within(screen.getByText('REMOVED').closest('tr')).getAllByRole('button')[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Save test container' }));
+    await screen.findByRole('button', { name: /Restore unsaved edits/i });
+    expect(screen.getByRole('alert')).toHaveTextContent(/container was deleted/i);
+    fireEvent.click(screen.getByRole('button', { name: /Restore unsaved edits/i }));
+    expect(screen.getByTestId('container-id')).toHaveTextContent('');
+    fireEvent.click(screen.getByRole('button', { name: 'Save test container' }));
+    await waitFor(() => expect(mastersAPI.addContainer).toHaveBeenCalledTimes(1));
+    expect(mastersAPI.updateContainer).toHaveBeenCalledTimes(1);
+});
+
+test('ignores an old Master response after navigating to another Master', async () => {
+    const oldRequest = deferred();
+    const nextMaster = { ...baseMaster, id: 43, invoice_no: 'NEXT-MASTER' };
+    mastersAPI.getById.mockReturnValueOnce(oldRequest.promise).mockResolvedValueOnce({ data: nextMaster });
+
+    const view = renderPage();
+    routeParams = { id: '43' };
+    view.rerender(<MasterFormPage />);
+    expect(await screen.findByDisplayValue('NEXT-MASTER')).toBeInTheDocument();
+    await act(async () => oldRequest.resolve({ data: baseMaster }));
+
+    expect(screen.getByDisplayValue('NEXT-MASTER')).toBeInTheDocument();
+    expect(screen.queryByDisplayValue('SERVER-INVOICE')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(mastersAPI.update.mock.calls[0][0]).toBe('43');
+});
+
+test('failed document retry replaces conflict notice but keeps a way to review the draft', async () => {
+    const latest = { ...baseMaster, version: 2 };
+    mastersAPI.documentSave
+        .mockRejectedValueOnce(conflictResponse(latest))
+        .mockRejectedValueOnce(new Error('network unavailable'));
+
+    renderPage({ id: '42', docType: 'PI' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Save test document' }));
+    fireEvent.click(await screen.findByRole('button', { name: /Restore unsaved edits/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save test document' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/network unavailable/i));
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/Conflict:/i);
+    expect(screen.getByRole('button', { name: /Discard unsaved edits/i })).toBeInTheDocument();
+    expect(screen.getByTestId('document-conflict')).toHaveTextContent('LOCAL-DOCUMENT');
+});
+
+test('VGM 404 reloads deleted target and preserves attempted edits for review', async () => {
+    const initial = { ...baseMaster, containers: [{ id: 9, container_no: 'STALE-VGM', products: [] }] };
+    const latest = { ...baseMaster, version: 2, containers: [] };
+    mastersAPI.getById.mockResolvedValueOnce({ data: initial }).mockResolvedValueOnce({ data: latest });
+    mastersAPI.documentSave.mockRejectedValueOnce(Object.assign(new Error('Container not found'), {
+        response: { status: 404, data: { error: 'Container not found.' } }
+    }));
+
+    renderPage({ id: '42', docType: 'VGM' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Save test VGM' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/container was deleted/i));
+    expect(screen.getByRole('button', { name: /Restore unsaved edits/i })).toBeInTheDocument();
+    expect(screen.getByTestId('vgm-conflict')).toHaveTextContent('LOCAL-SLIP');
+    expect(mastersAPI.getById).toHaveBeenCalledTimes(2);
+    expect(mastersAPI.documentSave).toHaveBeenCalledTimes(1);
 });
 
 test('discarding root conflict removes stale restore action and draft', async () => {
@@ -349,6 +507,24 @@ test('discarding root conflict removes stale restore action and draft', async ()
     expect(screen.queryByRole('button', { name: /Discard unsaved edits/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByLabelText('PI Invoice No.')).toHaveValue('SERVER-LATEST');
+});
+
+test('an earlier success timer cannot dismiss a newer conflict warning', async () => {
+    const saved = { ...baseMaster, version: 2 };
+    mastersAPI.update
+        .mockResolvedValueOnce({ data: saved })
+        .mockRejectedValueOnce(conflictResponse({ ...saved, version: 3 }));
+
+    renderPage();
+    await screen.findByDisplayValue('SERVER-INVOICE');
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Saved successfully!'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveClass('MuiAlert-colorWarning'));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 3200)); });
+
+    expect(screen.getByRole('alert')).toHaveTextContent(/Conflict:/);
+    expect(screen.getByRole('button', { name: /Restore unsaved edits/i })).toBeInTheDocument();
 });
 
 test('document conflict action is hidden after navigating to another document', async () => {
