@@ -221,6 +221,24 @@ beforeEach(() => {
     window.confirm = jest.fn(() => true);
 });
 
+test('document navigation does not save a selection or generate PDFs in bulk', async () => {
+    mastersAPI.getById.mockResolvedValue({
+        data: {
+            ...baseMaster,
+            documents: [{ document_type: 'CI', is_selected: true }]
+        }
+    });
+
+    renderPage();
+    await screen.findByDisplayValue('SERVER-INVOICE');
+    fireEvent.click(screen.getByRole('button', { name: 'Go to CI' }));
+
+    expect(navigate).toHaveBeenCalledWith('/masters/42/CI');
+    expect(mastersAPI.setDocuments).not.toHaveBeenCalled();
+    expect(mastersAPI.generatePDF).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: /generate all|save selected documents/i })).not.toBeInTheDocument();
+});
+
 test('sends root update with loaded Master version and restores stale root draft', async () => {
     const latest = { ...baseMaster, version: 2, invoice_no: 'SERVER-LATEST' };
     mastersAPI.update

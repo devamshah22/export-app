@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-    Box, Typography, Button, Grid, TextField, MenuItem, Paper, Divider,
+    Box, Typography, Button, Grid, TextField, MenuItem, Paper,
     Accordion, AccordionSummary, AccordionDetails, IconButton, Chip,
     Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-    Dialog, DialogTitle, DialogContent, DialogActions, Alert
+    Alert
 } from '@mui/material';
 import SaveIcon from '@mui/icons-material/Save';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
@@ -11,7 +11,6 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import EditIcon from '@mui/icons-material/Edit';
-import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import { useNavigate, useParams } from 'react-router-dom';
 import { mastersAPI, companiesAPI, clientsAPI } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -69,8 +68,6 @@ export default function MasterFormPage() {
     const [containerDialogOpen, setContainerDialogOpen] = useState(false);
     const [editingContainer, setEditingContainer] = useState(null);
     const [restoringContainerConflict, setRestoringContainerConflict] = useState(false);
-    const [documentDialogOpen, setDocumentDialogOpen] = useState(false);
-    const [selectedDocuments, setSelectedDocuments] = useState([]);
 
     const [clients, setClients] = useState([]);
     const [companies, setCompanies] = useState([]);
@@ -240,15 +237,6 @@ export default function MasterFormPage() {
             populated.version = m.version;
             setFormData(populated);
 
-            // Load selected documents
-            if (m.documents) {
-                const docTypes = [...new Set(
-                    m.documents
-                        .filter(d => d.is_selected && SUPPORTED_DOCUMENT_TYPES.has(d.document_type))
-                        .map(d => d.document_type)
-                )];
-                setSelectedDocuments(docTypes);
-            }
             return m;
         } catch (err) {
             if (activeMasterId.current !== requestedId) return null;
@@ -360,13 +348,6 @@ export default function MasterFormPage() {
             next.version = canonical.version;
             return next;
         });
-        if (canonical.documents) {
-            setSelectedDocuments([...new Set(
-                canonical.documents
-                    .filter(document => document.is_selected && SUPPORTED_DOCUMENT_TYPES.has(document.document_type))
-                    .map(document => document.document_type)
-            )]);
-        }
     };
 
     const handleSave = async (draftOverride = null) => {
@@ -458,8 +439,6 @@ export default function MasterFormPage() {
             const fields = conflictDraft.saveParts?.fields || conflictDraft.data || {};
             setFormData(previous => ({ ...previous, ...fields, version: master?.version }));
             setDocumentDraft(previous => ({ ...previous, ...fields }));
-        } else if (conflictDraft.type === 'documents') {
-            setSelectedDocuments(conflictDraft.documentTypes || []);
         } else if (conflictDraft.type === 'container-delete') {
             showSaveMessage('Delete intent remains pending. Retry deletion with the current Master version.');
             return;
@@ -638,67 +617,6 @@ export default function MasterFormPage() {
         } finally {
             finishSave();
         }
-    };
-
-    const handleDocumentsSave = async () => {
-        if (!beginSave('document selection')) return;
-        try {
-            if (!master?.version) throw new Error('Master version is unavailable. Reload before saving.');
-            const attemptedDocuments = [...selectedDocuments];
-            const response = await mastersAPI.setDocuments(id, attemptedDocuments, master.version);
-            installCanonicalMaster(canonicalMasterFromResponse(response));
-            setDocumentDialogOpen(false);
-        } catch (err) {
-            console.error('Failed to save documents:', err);
-            if (err.response?.status === 409) {
-                setConflictDraft({
-                    type: 'documents',
-                    baseVersion: master?.version,
-                    documentTypes: [...selectedDocuments]
-                });
-                const latest = err.response.data?.master;
-                if (latest) installCanonicalMaster(latest, { clearDraft: false, clearConflict: false });
-                else await loadMaster();
-                showSaveMessage('Conflict: another user changed this Master. Latest document selection loaded; unsaved selection remains available for review before retrying.');
-            } else {
-                showSaveMessage('Error saving selected documents.');
-            }
-        } finally {
-            finishSave();
-        }
-    };
-
-    const handleGenerateAllPDFs = async () => {
-        for (const docType of selectedDocuments) {
-            try {
-                await mastersAPI.generatePDF(id, docType);
-            } catch (err) {
-                console.error(`Failed to generate ${docType}:`, err);
-                alert(`Failed to generate ${docType}. It may not be implemented yet.`);
-            }
-        }
-        alert('All documents generated and saved to client folder.');
-    };
-
-    const handleOpenSinglePDF = async (docType) => {
-        try {
-            const response = await mastersAPI.generatePDF(id, docType);
-            const blob = new Blob([response.data], { type: 'application/pdf' });
-            const url = window.URL.createObjectURL(blob);
-            window.open(url, '_blank');
-        } catch (err) {
-            console.error(`Failed to open ${docType}:`, err);
-            alert(`Failed to generate ${docType}. It may not be implemented yet.`);
-        }
-    };
-
-    const handleDocToggle = (docType) => {
-        if (saveInFlight.current) return;
-        setSelectedDocuments(prev =>
-            prev.includes(docType)
-                ? prev.filter(d => d !== docType)
-                : [...prev, docType]
-        );
     };
 
     if (id && (!master || String(master.id) !== String(id))) {
