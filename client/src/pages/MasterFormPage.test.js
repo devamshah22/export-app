@@ -86,15 +86,6 @@ jest.mock('../components/documents/PIDocForm', () => function MockPIDocForm({ on
     );
 });
 
-jest.mock('../components/documents/CIDocForm', () => function MockCIDocForm({ data, onChange, onSave }) {
-    return (
-        <div data-testid="document-form">
-            <input aria-label="Vessel No." value={data.vessel_no || ''}
-                onChange={event => onChange({ ...data, vessel_no: event.target.value })} />
-            <button onClick={() => void onSave({ fields: data }).catch(() => {})}>Save test CI</button>
-        </div>
-    );
-});
 jest.mock('../components/documents/PLDocForm', () => function MockPLDocForm() {
     return <div data-testid="document-form" />;
 });
@@ -262,17 +253,63 @@ test('container table counts product rows, not their package quantities', async 
     expect(within(row).queryByText('60')).not.toBeInTheDocument();
 });
 
-test('CI loads the shared Master vessel and saves edits back to that field', async () => {
-    mastersAPI.getById.mockResolvedValue({ data: { ...baseMaster, vessel_no: 'MASTER-VESSEL' } });
-    renderPage({ id: '42', docType: 'CI' });
+test('CI saves vessel only as a document override and keeps other editable fields on Master', async () => {
+    const initial = { ...baseMaster, vessel_no: 'MASTER-VESSEL', other_ref: 'MASTER-REF' };
+    mastersAPI.getById.mockResolvedValue({ data: initial });
+    mastersAPI.documentSave.mockResolvedValueOnce({ data: {
+        ...initial, version: 2, other_ref: 'UPDATED-REF', overrides: { CI: { vessel_no: 'CI-ONLY' } }
+    } });
+    const view = renderPage({ id: '42', docType: 'CI' });
 
     const vessel = await screen.findByRole('textbox', { name: 'Vessel No.' });
     expect(vessel).toHaveValue('MASTER-VESSEL');
-    fireEvent.change(vessel, { target: { value: 'UPDATED-VESSEL' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save test CI' }));
+    fireEvent.change(vessel, { target: { value: 'CI-ONLY' } });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Other Ref' }), { target: { value: 'UPDATED-REF' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(mastersAPI.documentSave).toHaveBeenCalledWith('42', 'CI',
-        expect.objectContaining({ version: 1, fields: { vessel_no: 'UPDATED-VESSEL' } })));
+        expect.objectContaining({
+            version: 1,
+            fields: { other_ref: 'UPDATED-REF' },
+            overrides: { vessel_no: 'CI-ONLY' }
+        })));
+    expect(mastersAPI.update).not.toHaveBeenCalled();
+    expect(await screen.findByRole('textbox', { name: 'Vessel No.' })).toHaveValue('CI-ONLY');
+
+    routeParams = { id: '42', docType: 'edit' };
+    view.rerender(<MasterFormPage />);
+    expect(await screen.findByRole('textbox', { name: 'Vessel No.' })).toHaveValue('MASTER-VESSEL');
+});
+
+test('CI loads its saved vessel override without changing the Master vessel', async () => {
+    mastersAPI.getById.mockResolvedValue({ data: {
+        ...baseMaster, vessel_no: 'MASTER-VESSEL', overrides: { CI: { vessel_no: 'CI-ONLY' } }
+    } });
+    renderPage({ id: '42', docType: 'CI' });
+    expect(await screen.findByRole('textbox', { name: 'Vessel No.' })).toHaveValue('CI-ONLY');
+    expect(mastersAPI.documentSave).not.toHaveBeenCalled();
+});
+
+test('CI conflict preserves a document-only vessel edit for retry', async () => {
+    const initial = { ...baseMaster, vessel_no: 'MASTER-VESSEL' };
+    const latest = { ...initial, version: 2, vessel_no: 'OTHER-USER-VESSEL' };
+    mastersAPI.getById.mockResolvedValue({ data: initial });
+    mastersAPI.documentSave.mockRejectedValueOnce(conflictResponse(latest))
+        .mockResolvedValueOnce({ data: { ...latest, version: 3, overrides: { CI: { vessel_no: 'CI-ONLY' } } } });
+    renderPage({ id: '42', docType: 'CI' });
+
+    const vessel = await screen.findByRole('textbox', { name: 'Vessel No.' });
+    fireEvent.change(vessel, { target: { value: 'CI-ONLY' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByRole('button', { name: /Restore unsaved edits/i });
+    expect(vessel).toHaveValue('CI-ONLY');
+    fireEvent.click(screen.getByRole('button', { name: /Restore unsaved edits/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(mastersAPI.documentSave).toHaveBeenCalledTimes(2));
+    expect(mastersAPI.documentSave.mock.calls[1][2]).toMatchObject({
+        version: 2, fields: {}, overrides: { vessel_no: 'CI-ONLY' }
+    });
 });
 
 test('sends root update with loaded Master version and restores stale root draft', async () => {

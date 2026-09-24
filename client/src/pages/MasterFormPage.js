@@ -672,6 +672,7 @@ export default function MasterFormPage() {
                 delete payload.consignor_id;
                 delete payload.consignee_id;
                 delete payload.buyer_id;
+                if (currentDoc === 'CI') delete payload.vessel_no;
                 // Convert empty strings to null
                 Object.keys(payload).forEach(k => {
                     if (payload[k] === '') payload[k] = null;

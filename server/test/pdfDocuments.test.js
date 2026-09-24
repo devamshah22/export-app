@@ -24,12 +24,17 @@ const coaTest = { test_name: 'Purity', specification: '99% min', result: '99.8%'
 
 test('all supported Master document routes render HTML and return PDF bytes', async t => {
     const rendered = [];
-    t.mock.method(pool, 'query', async sql => {
+    let ciVesselOverride;
+    t.mock.method(pool, 'query', async (sql, values) => {
         if (sql.includes('FROM masters m')) return [[{ ...master }]];
         if (sql.includes('FROM containers WHERE master_id')) return [[{ ...container }]];
         if (sql.includes('FROM container_products WHERE container_id')) return [[]];
         if (sql.includes('FROM coa_tests WHERE master_id')) return [[{ ...coaTest }]];
-        if (sql.includes('FROM document_overrides WHERE master_id')) return [[]];
+        if (sql.includes('FROM document_overrides WHERE master_id')) {
+            return [values?.[1] === 'CI' && ciVesselOverride !== undefined
+                ? [{ field_key: 'vessel_no', field_value: ciVesselOverride }]
+                : []];
+        }
         throw new Error(`Unexpected PDF query: ${sql}`);
     });
     t.mock.method(pdfService, 'generatePDF', async (html, options) => {
@@ -67,5 +72,19 @@ test('all supported Master document routes render HTML and return PDF bytes', as
     assert.match(coa, /CERTIFICATE OF ANALYSIS AND SPECIFICATION/);
     assert.match(coa, /Purity/);
     assert.match(coa, /99.8%/);
-    assert.equal(rendered.length, documentTypes.length);
+
+    ciVesselOverride = 'CI-ONLY-VESSEL';
+    const ciOverrideResponse = await request(app).get('/api/pdf/master/42/CI');
+    assert.equal(ciOverrideResponse.status, 200);
+    assert.match(rendered.at(-1).html, /VESSEL No.<\/span> :- CI-ONLY-VESSEL/);
+    const plResponse = await request(app).get('/api/pdf/master/42/PL');
+    assert.equal(plResponse.status, 200);
+    assert.match(rendered.at(-1).html, /VESSEL No.<\/span> :- SAVED-VESSEL-42/);
+
+    ciVesselOverride = '';
+    const blankResponse = await request(app).get('/api/pdf/master/42/CI');
+    assert.equal(blankResponse.status, 200);
+    assert.match(rendered.at(-1).html, /VESSEL No.<\/span> :- <\/div>/);
+    assert.doesNotMatch(rendered.at(-1).html, /SAVED-VESSEL-42/);
+    assert.equal(rendered.length, documentTypes.length + 3);
 });
