@@ -245,6 +245,23 @@ test('document navigation does not save a selection or generate PDFs in bulk', a
     expect(screen.queryByRole('button', { name: /generate all|save selected documents/i })).not.toBeInTheDocument();
 });
 
+test('container table counts product rows, not their package quantities', async () => {
+    mastersAPI.getById.mockResolvedValue({ data: {
+        ...baseMaster,
+        containers: [{
+            id: 9,
+            sequence_no: 1,
+            container_no: 'TWO-PRODUCTS',
+            products: [{ id: 1, num_packages: 24 }, { id: 2, num_packages: 36 }]
+        }]
+    } });
+
+    renderPage();
+    const row = (await screen.findByText('TWO-PRODUCTS')).closest('tr');
+    expect(within(row).getByText('2')).toBeInTheDocument();
+    expect(within(row).queryByText('60')).not.toBeInTheDocument();
+});
+
 test('CI loads the shared Master vessel and saves edits back to that field', async () => {
     mastersAPI.getById.mockResolvedValue({ data: { ...baseMaster, vessel_no: 'MASTER-VESSEL' } });
     renderPage({ id: '42', docType: 'CI' });

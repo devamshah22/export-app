@@ -156,6 +156,11 @@ export default function ContainerDialog({
     };
 
     const handleSave = () => {
+        if (products.some(p => p.total_packages !== '' &&
+            (!Number.isSafeInteger(Number(p.total_packages)) || Number(p.total_packages) < 0))) {
+            window.alert('Package Count must be a non-negative whole number.');
+            return;
+        }
         const { weighbridge_id, ...persistedFormData } = formData;
         const payload = {
             ...persistedFormData,
@@ -168,8 +173,8 @@ export default function ContainerDialog({
             products: products.map(p => ({
                 ...p,
                 tare_weight_per_bag: p.tare_weight_per_bag ? parseFloat(p.tare_weight_per_bag) : null,
-                num_packages: p.total_packages ? parseInt(p.total_packages) : null,
-                total_packages: p.total_packages ? parseInt(p.total_packages) : null,
+                num_packages: p.total_packages !== '' ? Number(p.total_packages) : null,
+                total_packages: p.total_packages !== '' ? Number(p.total_packages) : null,
                 net_weight: p.net_weight ? parseFloat(p.net_weight) : null,
                 unit_rate: p.unit_rate ? parseFloat(p.unit_rate) : null,
             }))
@@ -293,6 +298,9 @@ export default function ContainerDialog({
                             </Grid>
                             <Grid item xs={12} sm={3}>
                                 <TextField fullWidth size="small" label="Description" value={product.description} onChange={handleProductChange(index, 'description')} />
+                            </Grid>
+                            <Grid item xs={6} sm={3}>
+                                <TextField fullWidth size="small" label="Package Count" type="number" slotProps={{ htmlInput: { min: 0, step: 1 } }} value={product.total_packages} onChange={handleProductChange(index, 'total_packages')} />
                             </Grid>
                             <Grid item xs={6} sm={2}>
                                 <TextField select fullWidth size="small" label="UOM" value={product.uom} onChange={handleProductChange(index, 'uom')}>
